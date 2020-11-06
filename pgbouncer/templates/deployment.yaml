@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pgbouncer.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgbouncer.labels" . | nindent 4 }}
+spec:
+{{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+{{- end }}
+  selector:
+    matchLabels:
+      {{- include "pgbouncer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/health: {{ include (print $.Template.BasePath "/health-configmap.yaml") . | sha256sum }}
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      {{ toYaml .Values.podAnnotations }}
+      {{- if and .Values.metrics.enabled .Values.metrics.podAnnotations }}
+      {{ toYaml .Values.metrics.podAnnotations | indent 8 }}
+      {{- end }}
+      labels:
+        {{- include "pgbouncer.selectorLabels" . | nindent 8 }}
+{{- if and .Values.metrics.enabled .Values.metrics.podLabels }}
+{{ toYaml .Values.metrics.podLabels | indent 8 }}
+{{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "pgbouncer.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image:  {{ template "pgbouncer.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+{{ toYaml .Values.pgbouncer.env | indent 10 }}
+          {{- if .Values.jobs.createAuthUser.enabled }}
+          - name: PGBOUNCER_AUTH_QUERY
+            value: "SELECT p_user, p_password FROM public.lookup($1)"
+          {{- end }}
+          volumeMounts:
+          - mountPath: /opt/pgbouncer/etc
+            name: userlist-txt
+          lifecycle:
+            preStop:
+              exec:
+                # Allow existing queries clients to complete within 120 seconds
+                command: ["/bin/sh", "-c", "killall -INT pgbouncer && sleep 120"]
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.metrics.enabled }}
+      - name: metrics
+        image: {{ template "pgbounce.metrics.image" . }}
+        imagePullPolicy: {{ .Values.metrics.image.pullPolicy | quote }}
+        env:
+        - name: PGBOUNCER_USER
+          value: {{ .Values.username }}
+        - name: PGBOUNCER_PASS
+          value: {{ .Values.password }}
+        ports:
+        - name: metrics
+          containerPort: 9121
+          protocol: TCP
+        resources:
+{{ toYaml .Values.metrics.resources | indent 10 }}
+{{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+      - name: userlist-txt
+        secret:
+          items:
+          - key: userlist.txt
+            path: userlist.txt
+          secretName: pgbouncer-secrets
