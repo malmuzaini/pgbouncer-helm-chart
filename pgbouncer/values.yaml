@@ -1,0 +1,241 @@
+# Default values for pgbouncer.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+
+  image:
+    registry: docker.io
+    repository: pgbouncer/pgbouncer
+    tag: 1.14.0
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-e`xample.local
+      paths: []
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+#
+# list of the databases 
+databases: 
+- name: mydb
+  host: postgresql
+  port: 5432
+  # In case you want the simple way to authenticate clients, which is adding the credentials for the user 
+  # to `userlist.txt` file and provide the credentials and set `addToAuthFile` to true.
+  # But in case you want the advanced way to authenticate client by auth_user using auth_query
+  # set `addToAuthFile` to false and enable createAuthUser job to create the auth_user automatically or you can still create it manullay and populate it in the env vars. 
+  # Please refer to https://www.cybertec-postgresql.com/en/pgbouncer-authentication-made-easy/
+  addToAuthFile: false
+  # provide 
+  username: 
+  password: 
+  # or a secret that contains them
+  # the secret is expected to have the two key's `POSTGRES_USERNAME` and `POSTGRES_PASSWORD`
+  # if both provided `secret` will take precedence
+  secretName: 
+
+
+jobs:
+  # 
+  # This job will create auth user in each database listed above
+  createAuthUser:
+    enabled: true
+
+    image:
+      registry: docker.io
+      repository: postgres
+      tag: alpine
+      pullPolicy: IfNotPresent
+
+# the username and the password for pgbouncer's database
+# and it will be appended to userlist.txt file
+username: pgbouncer
+password: mypassword
+
+# the authentication user the pgbouncer will use to connect to database to authenticate users
+#  using auth_query
+# this auth user will be created in all databses by the createAuthUser job.
+# this will be appended to userlist.txt file
+# TODO: refactor it to be auth user for each db
+authUser:
+  name: myauthuser
+  password: mypassword
+
+#
+# userlist.txt file that contains the users allowed in.
+# In the following format
+# "pgbouncer" "mypassword"
+# "pgbouncer_authenticator" "mypassword"
+#
+userlisttxt: |
+
+
+#
+# Please refer to https://gitlab.com/aztek-io/oss/containers/pgbouncer-container/-/tree/master
+# fo
+env:
+- name: PGBOUNCER_LISTEN_PORT
+  value: "6432"
+- name: PGBOUNCER_POOL_MODE
+  value: session
+- name: PGBOUNCER_AUTH_TYPE
+  value: md5
+- name: PGBOUNCER_ADMIN_USERS
+  value: pgbouncer
+- name: PGBOUNCER_AUTH_FILE
+  value: /opt/pgbouncer/etc/userlist.txt
+
+## Prometheus Exporter / Metrics
+##
+metrics:
+  enabled: false
+
+  image:
+    registry: docker.io
+    # https://hub.docker.com/r/spreaker/prometheus-pgbouncer-exporter
+    repository: spreaker/prometheus-pgbouncer-exporter
+    tag: 2.1.1
+    pullPolicy: IfNotPresent
+    ## Optionally specify an array of imagePullSecrets.
+    ## Secrets must be manually created in the namespace.
+    ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+    ##
+    # pullSecrets:
+    #   - myRegistryKeySecretName
+
+  ## Metrics exporter resource requests and limits
+  ## ref: http://kubernetes.io/docs/user-guide/compute-resources/
+  ##
+  # resources: {}
+
+  ## Extra arguments for Metrics exporter, for example:
+  ## extraArgs:
+  ##   check-keys: myKey,myOtherKey
+  # extraArgs: {}
+
+  ## Metrics exporter pod Annotation and Labels
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9121"
+  # podLabels: {}
+
+  # Enable this if you're using https://github.com/coreos/prometheus-operator
+  serviceMonitor:
+    enabled: false
+    ## Specify a namespace if needed
+    # namespace: monitoring
+    # fallback to the prometheus default unless specified
+    # interval: 10s
+    ## Defaults to what's used if you follow CoreOS [Prometheus Install Instructions](https://github.com/bitnami/charts/tree/master/bitnami/prometheus-operator#tldr)
+    ## [Prometheus Selector Label](https://github.com/bitnami/charts/tree/master/bitnami/prometheus-operator#prometheus-operator-1)
+    ## [Kube Prometheus Selector Label](https://github.com/bitnami/charts/tree/master/bitnami/prometheus-operator#exporters)
+    selector:
+      prometheus: kube-prometheus
+
+  ## Custom PrometheusRule to be defined
+  ## The value is evaluated as a template, so, for example, the value can depend on .Release or .Chart
+  ## ref: https://github.com/coreos/prometheus-operator#customresourcedefinitions
+  prometheusRule:
+    enabled: false
+    additionalLabels: {}
+    namespace: ""
+    rules: []
+      ## These are just examples rules, please adapt them to your needs.
+      ## Make sure to constraint the rules to the current postgresql service.
+      #  - alert: RedisDown
+      #    expr: redis_up{service="{{ template "pgbounce.fullname" . }}-metrics"} == 0
+      #    for: 2m
+      #    labels:
+      #      severity: error
+      #    annotations:
+      #      summary: Redis instance {{ "{{ $instance }}" }} down
+      #      description: Redis instance {{ "{{ $instance }}" }} is down.
+      #  - alert: RedisMemoryHigh
+      #    expr: >
+      #       redis_memory_used_bytes{service="{{ template "pgbounce.fullname" . }}-metrics"} * 100
+      #       /
+      #       redis_memory_max_bytes{service="{{ template "pgbounce.fullname" . }}-metrics"}
+      #       > 90 =< 100
+      #    for: 2m
+      #    labels:
+      #      severity: error
+      #    annotations:
+      #      summary: Redis instance {{ "{{ $instance }}" }} is using too much memory
+      #      description: Redis instance {{ "{{ $instance }}" }} is using {{ "{{ $value }}" }}% of its available memory.
+      #  - alert: RedisKeyEviction
+      #    expr: increase(redis_evicted_keys_total{service="{{ template "pgbounce.fullname" . }}-metrics"}[5m]) > 0
+      #    for: 1s
+      #    labels:
+      #      severity: error
+      #    annotations:
+      #      summary: Redis instance {{ "{{ $instance }}" }} has evicted keys
+      #      description: Redis instance {{ "{{ $instance }}" }} has evicted {{ "{{ $value }}" }} keys in the last 5 minutes.
+
+
+  ## Metrics exporter pod priorityClassName
+  # priorityClassName: {}
+  service:
+    type: ClusterIP
+    ## Use serviceLoadBalancerIP to request a specific static IP,
+    ## otherwise leave blank
+    # loadBalancerIP:
+    annotations: {}

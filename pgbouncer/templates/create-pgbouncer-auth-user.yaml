@@ -1,0 +1,76 @@
+{{ $labels := (include "pgbouncer.selectorLabels" . ) }}
+{{ $serviceAccountName := (include "pgbouncer.serviceAccountName" .) }}
+{{- if and .Values.jobs.createAuthUser.enabled }}
+{{- range .Values.databases }}
+{{- if not .addToAuthFile }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-pgbouncer-auth-user-{{ .name | lower | replace "_" ""}}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+   {{- include "pgbouncer.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: {{ $serviceAccountName }}
+      initContainers:
+        - name: check-db-readiness
+          image: {{ template "pgbouncer.create_user_job_image" . }}
+          command:
+            - /bin/bash
+            - -c
+            - until pg_isready -h {{ .host }} -p {{ .port }}; do echo waiting for database; sleep 2; done;
+      containers:
+        - name: create
+          image: {{ template "pgbouncer.image" . }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+
+              cat <<EOF | psql -h {{ .host }} -p {{ .port }} -U $PGUSERNAME -d "{{ .name }}" -f -
+
+              CREATE ROLE "{{ $.Values.authUser.name }}" with LOGIN PASSWORD '{{ $.Values.authUser.password }}';
+
+              -- create funtion to lookup password by "{{ $.Values.authUser.name }}"
+              -- pg_shadow is only accessible to superusers, so we create a SECURITY DEFINER function to give the caller
+              -- access to the passwords
+              CREATE FUNCTION public.lookup (
+                INOUT p_user     name,
+                OUT   p_password text
+              ) RETURNS record
+                LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS
+                  'SELECT usename, passwd FROM pg_shadow WHERE usename = p_user;';
+
+              -- make sure only "{{ $.Values.authUser.name }}" can use the function
+              REVOKE EXECUTE ON FUNCTION public.lookup(name) FROM PUBLIC;
+              GRANT EXECUTE ON FUNCTION public.lookup(name) TO {{ $.Values.authUser.name }};
+
+              EOF
+          env:
+          {{- if .secretName }}
+          - name: PGPASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .secretName }}
+                key: POSTGRES_PASSWORD
+          - name: PGUSERNAME
+            valueFrom:
+              secretKeyRef:
+                name: {{ .secretName }}
+                key: POSTGRES_USERNAME
+          {{- else -}}
+          - name: PGPASSWORD
+            value: {{ .password }}
+          - name: PGUSERNAME
+            value: {{ .username }}
+          {{- end }}
+      restartPolicy: Never
+{{- end }}
+{{- end }}
+{{- end }}
